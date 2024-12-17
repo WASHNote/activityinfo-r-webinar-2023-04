@@ -1,0 +1,189 @@
+---
+title: "Getting records the easy way and manipulating forms"
+subtitle: "ActivityInfo R demo"
+date: 2023-04-13
+author: "Nicolas Dickinson, WASHNote"
+format: 
+  revealjs:
+    theme: serif
+  
+editor: visual
+execute:
+  echo: true
+  output: false
+---
+
+# Getting records
+
+## getRecords()
+
+```{r}
+#| echo: false
+#| eval: true
+#| output: false
+
+# devtools::install_github("bedatadriven/activityinfo-R")
+
+library(dplyr)
+library(activityinfo)
+
+activityInfoToken(token = Sys.getenv("NICK_AI"))
+databaseId <- Sys.getenv("DEMO_DB")
+```
+
+-   `getRecords()` is a user-friendly and tidyverse compatible replacement for `queryTable()`
+
+-   Use `collect()` to download to a data frame.
+
+```{r}
+#| echo: true
+#| output: false
+#| warning: true
+library(dplyr)
+library(activityinfo)
+
+# the base pipe |> is available from R4.1. 
+# Otherwise use the maggitr pipe %>%.
+records_df <- 
+  getRecords("ceam1x8kq6ikcujg") |> 
+  select(ends_with("Name")) |>
+  collect()
+```
+
+## Columns as requested
+
+![](images/image-1149861727.png){width="100%"}
+
+## Manipulate the data frame as usual after `collect()`
+
+```{r}
+ records_df |> 
+  filter(`Sector Name`=="Nutrition") |>
+  arrange(`Organization Name`, `Admin 1 Name`, `Admin 2 Name`) |>
+  slice_head(n=2) 
+```
+
+![](images/image-1315857030.png){width="100%"}
+
+## Filter large data sets *before* downloading
+
+It is possible to use some filters and limit the records before they are downloaded (with `collect()`).
+
+```{r}
+#| echo: true
+#| chunk_output_type: console
+#| paged.print: false
+
+# Taking away collect() results in a reference to the server instead of a data frame. information is displayed about the query being prepared.
+getRecords("ceam1x8kq6ikcujg") |> 
+  select(ends_with("Name")) |>  
+  arrange(`Organization Name`) |> 
+  filter(`Sector Name`=="Nutrition") |> 
+  slice_head(n=2)
+
+
+```
+
+![](images/image-31871765.png){width="100%"}
+
+## Limitations before `collect()`
+
+Only `select()`, `filter()`, `arrange()`, `slice_head()`, and `slice_tail()` can be used before fetching records.
+
+You must use the verbs in order:
+
+1.  `arrange()` (limited to a single column) and/or `dplyr::filter()` in any combination.
+
+2.  `slice_head()`, `slice_tail()` or `adjustWindow(x, offSet = 0L, limit)` in any combination
+
+3.  **Always end with `collect()`**
+
+## More columns/different styles
+
+Columns from `getRecords()` are as in the web UI by default with the addition of record id columns but can be modified with helper functions and the style argument:
+
+-   `getRecords(x, style = prettyColumnStyle())` : the default style
+
+-   `minimalColumnStyle()` : removes all ID columns not found in the web UI.
+
+-   See `?columnStyle` for all options and helper functions.
+
+## Adding reference columns
+
+Using styles, it is possible to include more columns from referenced tables to include regional codes from *Admin 1* and *Admin 2*:
+
+```{r}
+#| output: true
+getRecords("ceam1x8kq6ikcujg", 
+           style = prettyColumnStyle(allReferenceFields = TRUE)) |> 
+    select(ends_with("Name"), ends_with("CODE")) |>
+    arrange(`Organization Name`)  |>
+    filter(`Sector Name`=="Nutrition") |>
+    slice_head(n=2) |> collect()
+```
+
+![](images/image-1014107121.png)
+
+## Summary of getRecords()
+
+-   Use the record id or a form tree to `getRecords()` and then `select()` columns to select and rename them. Use column styles for fine control.
+
+-   Always end with `collect()` to continue analysis on a data frame.
+
+-   If you are managing very large data sets and want to reduce download time, use `filter()` before `collect()`.
+
+# Manipulating ActivityInfo forms
+
+## Creating a form from scratch
+
+```{r}
+#| output: true
+
+fmSchema <- formSchema(databaseId, label = "A demonstration form created in R") |>
+  addFormField(textFieldSchema(label = "What is your name?", code = "name", key = TRUE, required = TRUE)) |>
+  addFormField(
+    multipleSelectFieldSchema(
+      label = "How do you expect to use the activityinfo R package?", 
+      options = c(
+        "Download records",
+        "Manipulate forms",
+        "Create visualizations",
+        "Create new forms",
+        "Import data",
+        "Manage database users"
+        ), 
+      required = TRUE,
+      code = "use")
+    )|>
+  addFormField(quantityFieldSchema(label = "How old are you?", code = "age"))
+
+```
+
+## Manipulate existing elements and upload form
+
+```{r}
+#| echo: true
+# Change their order
+fmSchema$elements <- fmSchema$elements[c(1,3,2)]
+
+# Then eliminate the age question by index
+# fmSchema$elements <- fmSchema$elements[c(1,3)]
+
+# Use deleteFormField() for easier access to specific form fields by label, code or field id
+fmSchema |>
+  deleteFormField(code = "age")
+
+addForm(fmSchema)
+```
+
+## Using getRecords() to copy form fields to a new form
+
+```{r}
+#| echo: true
+
+getRecords("ceam1x8kq6ikcujg", 
+           style = prettyColumnStyle(allReferenceFields = TRUE)) |> 
+  select(ends_with("Name"), ends_with("CODE")) |>
+  extractSchemaFromFields(databaseId, "A copied form", useColumnNames = TRUE) |>
+  addForm()
+```
