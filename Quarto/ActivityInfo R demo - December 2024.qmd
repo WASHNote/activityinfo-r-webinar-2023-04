@@ -1,0 +1,645 @@
+---
+title: "Working with grant-based roles and advanced user management"
+subtitle: "ActivityInfo R demo: what's new since last year"
+date: 2024-12-17
+author: "Nicolas Dickinson, WASHNote"
+format: 
+  revealjs:
+    theme: serif
+  
+editor: visual
+execute:
+  echo: true
+  output: false
+---
+
+```{r}
+
+library(dplyr)
+library(activityinfo)
+```
+
+# Introduction
+
+Agenda
+
+-   What changed in the last year?
+
+-   Form manipulation and data download
+
+-   Grant-based roles
+
+-   Bulk update/deactivate/delete users
+
+# What changed (1)
+
+-   Grant-based role support has been added
+
+-   New tutorials
+
+    -   Working with grant-based roles
+
+    -   Advanced user management: bulk add and delete users
+
+    -   Advanced use-cases with roles
+
+# What changed (2)
+
+-   getRecords() is more robust
+
+    -   column de-duplication
+
+    -   handles cyclic references and there is a maxDepth parameters
+
+-   New billing account functions to manage databases
+
+-   Improved credentials management: API tokens are now stored per ActivityInfo server
+
+# Up next
+
+-   Support for ActivityInfo formulas in filter() and mutate() for prepared views on the server
+
+-   Column auto-completion andexpansion into parent forms, sub-forms, reference forms, etc.
+
+    -   records %\>% mutate(child_name = records\$child\$childName
+
+# Installation and authentication
+
+```{r}
+
+
+library(activityinfo)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+```
+
+# Working with grant-based roles
+
+Here is the extracted code from the tutorial, organized for you to step through one section at a time. I'll also flag any potential issues.
+
+------------------------------------------------------------------------
+
+### Setup
+
+To install the package and the documentation:
+
+``` r
+# Do this in your R console
+
+# We need the package remotes to install from GitHub
+install.packages("remotes")
+
+# Install the latest release of the ActivityInfo R package and build documentation
+remotes::install_github("bedatadriven/activityinfo-R", build_vignettes = TRUE)
+
+# Use the documentation
+browseVignettes(package = "activityinfo")
+
+# Use the package
+library(activityinfo)
+
+activityInfoToken()
+```
+
+------------------------------------------------------------------------
+
+### Add a New Database
+
+```{r}
+library(activityinfo)
+
+# We can use these options to turn on and off debugging messages
+# Useful for logging on servers
+options(activityinfo.verbose.requests = FALSE) # http requests
+options(activityinfo.verbose.tasks = FALSE) # responses to different tasks
+
+newDb <- addDatabase(
+    label = 
+      sprintf(
+        "Demo database %s", 
+        as.POSIXlt(Sys.time(), "UTC", "%Y-%m-%dT%H:%M")
+        )
+  )
+
+databaseId <- newDb$databaseId
+
+```
+
+Now let's create a single form:
+
+```{r}
+
+surveySchema <- formSchema(
+  databaseId = databaseId,
+  label = "My new survey",
+  elements = list(
+    textFieldSchema(
+      label = "What is your name?",
+      code = "NAME",
+      description = "Please provide your full name",
+      required = TRUE
+    ),
+    singleSelectFieldSchema(
+      label = "What is your sex?",
+      code = "SEX",
+      options = c("Female", "Male", "Prefer not to answer"),
+      required = TRUE
+    ),
+    singleSelectFieldSchema(
+      label = "Are you pregnant",
+      relevanceRule = "SEX != 'Male'",
+      options = c("Yes", "No"),
+      required = TRUE
+    )
+  )
+)
+
+# Or we can split it up and use chaining to build our form
+fmSchema <- formSchema(databaseId = newDb$databaseId, label = "An optional form")
+
+# Note that it is possible to chain together and even create fields inside the chain
+
+fmSchema <- fmSchema |>
+  addFormField(textFieldSchema(label = "Anonymous feedback", code = "feedback"))
+
+
+surveyForm <- addForm(surveySchema)
+optionalForm <- addForm(fmSchema)
+
+```
+
+------------------------------------------------------------------------
+
+### Fetch Database Tree
+
+```{r}
+
+dbTree <- getDatabaseTree(databaseId = newDb$databaseId)
+as_tibble(dbTree$ownerRef)
+```
+
+------------------------------------------------------------------------
+
+### Retrieve System Roles
+
+```{r}
+roles <- getDatabaseRoles(dbTree)
+roles
+```
+
+------------------------------------------------------------------------
+
+### Expand Administrative Permissions on the Database
+
+```{r}
+roles |> 
+  tidyr::unnest_longer(permissions) |> 
+  tidyr::unnest_wider(permissions) |> 
+  select(id, label, operation)
+```
+
+------------------------------------------------------------------------
+
+### List Role Grants
+
+A grant can be a
+
+-   database,
+
+-   folder, or
+
+-   form.
+
+The `resourceId` in these default roles is the `databaseId`.
+
+```{r}
+roles |> 
+  select(id, label, grants) |> 
+  tidyr::unnest_longer(grants) |> 
+  tidyr::unnest_wider(grants)
+```
+
+------------------------------------------------------------------------
+
+### Expand Grants and Operations
+
+```{r}
+roles |> 
+  select(id, label, grants) |> 
+  tidyr::unnest_longer(grants) |> 
+  tidyr::unnest_wider(grants) |> 
+  tidyr::unnest_longer(operations) |> 
+  tidyr::unnest_wider(operations) |> 
+  select(id, label, resourceId, operation)
+```
+
+------------------------------------------------------------------------
+
+### Retrieve a Single Role
+
+```{r}
+readOnlyRole <- Filter(function(x) x$id == "readonly", dbTree$roles)
+str(readOnlyRole)
+```
+
+------------------------------------------------------------------------
+
+### Add Users in Bulk
+
+```{r}
+
+users <- data.frame(
+  name = paste0("Person ", 1:10),
+  email = paste0("dickinson+person", 1:10, "@washnote.com"),
+  stringsAsFactors = FALSE
+)
+
+```
+
+Adding
+
+```{r}
+
+
+defaultRoleId = "readonly" # Default role for all new users
+
+for (i in seq_len(nrow(users))) {
+  addDatabaseUser(databaseId = databaseId,
+            email = users[i,"email"],
+            name = users[i,"name"],
+            roleId = defaultRoleId)
+}
+
+```
+
+### Inspect Role Assignments
+
+```{r}
+dbUserRoles <- getDatabaseUsers(dbTree$databaseId) |> unnest_wider(role, names_sep = "_")
+dbUserRoles
+```
+
+------------------------------------------------------------------------
+
+### Create Role: Data Entry Without Delete
+
+```{r}
+dataEntryFormId <- surveySchema$id
+
+dataEntryNoDeleteRole <- role(
+  id = "entrynodelete",
+  label = "Data entry without delete",
+  grants = list(
+    grant(
+      resourceId = dataEntryFormId, 
+      permissions = resourcePermissions(
+        view = TRUE,
+        add_record = TRUE,
+        edit_record = TRUE,
+        delete_record = FALSE,
+        export_records = TRUE),
+      optional = FALSE
+    )
+  )
+)
+
+updateRole(dbTree$databaseId, dataEntryNoDeleteRole)
+```
+
+------------------------------------------------------------------------
+
+### Create Role: Admin Without Automation
+
+```{r}
+adminRoleNoAutomation <- role(
+  id = "adminnoautomation",
+  label = "Admin without automation",
+  grants = list(
+    grant(
+      resourceId = dbTree$databaseId, 
+      permissions = resourcePermissions(
+        view = TRUE,
+        add_record = TRUE,
+        edit_record = TRUE,
+        delete_record = TRUE,
+        export_records = TRUE,
+        lock_records = TRUE,
+        add_resource = TRUE,
+        edit_resource = TRUE,
+        delete_resource = TRUE,
+        bulk_delete = TRUE,
+        manage_collection_links = TRUE,
+        manage_users = TRUE,
+        manage_roles = TRUE,
+        manage_reference_data = TRUE,
+        manage_translations = TRUE,
+        audit = TRUE,
+        share_reports = TRUE,
+        publish_reports = TRUE,
+        reviewer_only = TRUE,
+        discover = TRUE),
+      optional = FALSE
+    )
+  ),
+  permissions = databasePermissions(
+    manage_automations = FALSE,
+    manage_users = TRUE,
+    manage_roles = TRUE
+  )
+)
+
+addRole(dbTree$databaseId, adminRoleNoAutomation)
+```
+
+------------------------------------------------------------------------
+
+### Update Role with Optional Form Access
+
+```{r}
+optionalFormId <- optionalForm$id
+
+dataEntryNoDeleteRole <- role(
+  id = "entrynodelete",
+  label = "Data entry without delete",
+  grants = list(
+    grant(
+      resourceId = dataEntryFormId, 
+      permissions = resourcePermissions(
+        view = TRUE,
+        add_record = TRUE,
+        edit_record = TRUE,
+        delete_record = FALSE,
+        export_records = TRUE),
+      optional = FALSE
+    ),
+    grant(
+      resourceId = optionalFormId, 
+      permissions = resourcePermissions(
+        view = TRUE,
+        add_record = TRUE,
+        edit_record = TRUE,
+        delete_record = FALSE,
+        export_records = TRUE),
+      optional = TRUE
+    )
+  )
+)
+
+updateRole(dbTree$databaseId, dataEntryNoDeleteRole)
+```
+
+------------------------------------------------------------------------
+
+### Create Partner and Reporting Forms
+
+#### Partner Form
+
+```{r}
+partnerForm <- formSchema(
+  databaseId = dbTree$databaseId, 
+  label = "Reporting Partners") |>
+  addFormField(textFieldSchema(code = "name", label = "Partner name", required = TRUE))
+
+addForm(partnerForm)
+partnerTbl <- tibble(name = c("Partner A", "Partner B", "Partner C"))
+importRecords(partnerForm$id, data = partnerTbl)
+```
+
+------------------------------------------------------------------------
+
+#### Reporting Form
+
+```{r}
+reportingForm <- formSchema(
+  databaseId = dbTree$databaseId, 
+  label = "Partner reports") |>
+  addFormField(referenceFieldSchema(referencedFormId = partnerForm$id, code = "rp", label = "Partner", required = TRUE)) |>
+  addFormField(textFieldSchema(label = "Report", required = TRUE))
+
+addForm(reportingForm)
+
+partnerTbl <- getRecords(partnerForm) |> collect()
+partnerIds <- partnerTbl[["_id"]]
+
+partnerReports <- paste0("This is a report from ", partnerTbl[["Partner name"]], ".")
+
+reportingTbl <- tibble(Partner = partnerIds, Report = partnerReports)
+importRecords(reportingForm$id, data = reportingTbl)
+```
+
+------------------------------------------------------------------------
+
+### Define Reporting Partner Role
+
+```{r}
+partnerParameter <- parameter(id = "partner", label = "Partner", range = partnerForm$id)
+
+reportingPartnerRole <- role(
+  id = "rp",
+  label = "Reporting Partner",
+  parameters = list(partnerParameter),
+  grants = list(
+    grant(resourceId = dbTree$databaseId, permissions = resourcePermissions(view = TRUE)),
+    grant(resourceId = reportingForm$id, permissions = resourcePermissions(
+      view = sprintf("%s == @user.partner", partnerForm$id),
+      edit_record = sprintf("%s == @user.partner", partnerForm$id),
+      discover = TRUE,
+      export_records = TRUE))
+  )
+)
+
+addRole(dbTree$databaseId, reportingPartnerRole)
+```
+
+------------------------------------------------------------------------
+
+### Add Users with Roles
+
+```{r}
+partnerAId <- partnerTbl |> filter(`Partner name` == "Partner A") |> pull(`_id`)
+
+addDatabaseUser(
+  databaseId = dbTree$databaseId, 
+  email = "user.a@example.com", 
+  name = "User A", 
+  roleId = "rp", 
+  roleParameters = list(partner = partnerAId)
+)
+```
+
+------------------------------------------------------------------------
+
+# Getting records
+
+## getRecords()
+
+```{r}
+#| echo: false
+#| eval: true
+#| output: false
+
+# devtools::install_github("bedatadriven/activityinfo-R")
+
+activityInfoToken(token = Sys.getenv("NICK_AI"))
+databaseId <- Sys.getenv("DEMO_DB")
+```
+
+-   `getRecords()` is a user-friendly and tidyverse compatible replacement for `queryTable()`
+
+-   Use `collect()` to download to a data frame.
+
+```{r}
+#| echo: true
+#| output: false
+#| warning: true
+
+# the base pipe |> is available from R4.1. 
+# Otherwise use the maggitr pipe %>%.
+records_df <- 
+  getRecords("ceam1x8kq6ikcujg") |> 
+  select(ends_with("Name")) |>
+  collect()
+
+records_df
+```
+
+## Columns as requested
+
+![](images/image-1149861727.png){width="100%"}
+
+## Manipulate the data frame as usual after `collect()`
+
+```{r}
+ records_df |> 
+  filter(`Sector Name`=="Nutrition") |>
+  arrange(`Organization Name`, `Admin 1 Name`, `Admin 2 Name`) |>
+  slice_head(n=2) 
+```
+
+![](images/image-1315857030.png){width="100%"}
+
+## Filter large data sets *before* downloading
+
+It is possible to use some filters and limit the records before they are downloaded (with `collect()`).
+
+```{r}
+#| echo: true
+#| chunk_output_type: console
+#| paged.print: false
+
+# Taking away collect() results in a reference to the server instead of a data frame. information is displayed about the query being prepared.
+getRecords("ceam1x8kq6ikcujg") |> 
+  select(ends_with("Name")) |>  
+  arrange(`Organization Name`) |> 
+  filter(`Sector Name`=="Nutrition") |> 
+  slice_head(n=2)
+
+
+```
+
+![](images/image-31871765.png){width="100%"}
+
+## Limitations before `collect()`
+
+Only `select()`, `filter()`, `arrange()`, `slice_head()`, and `slice_tail()` can be used before fetching records.
+
+You must use the verbs in order:
+
+1.  `arrange()` (limited to a single column) and/or `dplyr::filter()` in any combination.
+
+2.  `slice_head()`, `slice_tail()` or `adjustWindow(x, offSet = 0L, limit)` in any combination
+
+3.  **Always end with `collect()`**
+
+## More columns/different styles
+
+Columns from `getRecords()` are as in the web UI by default with the addition of record id columns but can be modified with helper functions and the style argument:
+
+-   `getRecords(x, style = prettyColumnStyle())` : the default style
+
+-   `minimalColumnStyle()` : removes all ID columns not found in the web UI.
+
+-   See `?columnStyle` for all options and helper functions.
+
+## Adding reference columns
+
+Using styles, it is possible to include more columns from referenced tables to include regional codes from *Admin 1* and *Admin 2*:
+
+```{r}
+#| output: true
+getRecords("ceam1x8kq6ikcujg", 
+           style = prettyColumnStyle(allReferenceFields = TRUE)) |> 
+    select(ends_with("Name"), ends_with("CODE")) |>
+    arrange(`Organization Name`)  |>
+    filter(`Sector Name`=="Nutrition") |>
+    slice_head(n=2) |> collect()
+```
+
+![](images/image-1014107121.png)
+
+## Summary of getRecords()
+
+-   Use the record id or a form tree to `getRecords()` and then `select()` columns to select and rename them. Use column styles for fine control.
+
+-   Always end with `collect()` to continue analysis on a data frame.
+
+-   If you are managing very large data sets and want to reduce download time, use `filter()` before `collect()`.
+
+# Manipulating ActivityInfo forms
+
+## Creating a form from scratch
+
+```{r}
+#| output: true
+
+fmSchema <- formSchema(databaseId, label = "A demonstration form created in R") |>
+  addFormField(textFieldSchema(label = "What is your name?", code = "name", key = TRUE, required = TRUE)) |>
+  addFormField(
+    multipleSelectFieldSchema(
+      label = "How do you expect to use the activityinfo R package?", 
+      options = c(
+        "Download records",
+        "Manipulate forms",
+        "Create visualizations",
+        "Create new forms",
+        "Import data",
+        "Manage database users"
+        ), 
+      required = TRUE,
+      code = "use")
+    )|>
+  addFormField(quantityFieldSchema(label = "How old are you?", code = "age"))
+
+```
+
+## Manipulate existing elements and upload form
+
+```{r}
+#| echo: true
+# Change their order
+fmSchema$elements <- fmSchema$elements[c(1,3,2)]
+
+# Then eliminate the age question by index
+# fmSchema$elements <- fmSchema$elements[c(1,3)]
+
+# Use deleteFormField() for easier access to specific form fields by label, code or field id
+fmSchema |>
+  deleteFormField(code = "age")
+
+addForm(fmSchema)
+```
+
+## Using getRecords() to copy form fields to a new form
+
+```{r}
+#| echo: true
+
+getRecords("ceam1x8kq6ikcujg", 
+           style = prettyColumnStyle(allReferenceFields = TRUE)) |> 
+  select(ends_with("Name"), ends_with("CODE")) |>
+  extractSchemaFromFields(databaseId, "A copied form", useColumnNames = TRUE) |>
+  addForm()
+```
