@@ -59,9 +59,9 @@ Agenda
 
 -   Support for ActivityInfo formulas in filter() and mutate() for prepared views on the server
 
--   Column auto-completion andexpansion into parent forms, sub-forms, reference forms, etc.
+-   Column auto-completion and expansion into parent forms, sub-forms, reference forms, etc.
 
-    -   records %\>% mutate(child_name = records\$child\$childName
+    -   records %\>% mutate(child_name = records\$child\$childName)
 
 # Installation and authentication
 
@@ -70,6 +70,7 @@ Agenda
 
 library(activityinfo)
 library(tidyverse)
+
 library(dplyr)
 library(tidyr)
 library(purrr)
@@ -93,7 +94,7 @@ To install the package and the documentation:
 install.packages("remotes")
 
 # Install the latest release of the ActivityInfo R package and build documentation
-remotes::install_github("bedatadriven/activityinfo-R", build_vignettes = TRUE)
+remotes::install_github("bedatadriven/activityinfo-R", build_vignettes = TRUE, force = TRUE)
 
 # Use the documentation
 browseVignettes(package = "activityinfo")
@@ -101,7 +102,7 @@ browseVignettes(package = "activityinfo")
 # Use the package
 library(activityinfo)
 
-activityInfoToken()
+# activityInfoToken()
 ```
 
 ------------------------------------------------------------------------
@@ -165,7 +166,6 @@ fmSchema <- formSchema(databaseId = newDb$databaseId, label = "An optional form"
 fmSchema <- fmSchema |>
   addFormField(textFieldSchema(label = "Anonymous feedback", code = "feedback"))
 
-
 surveyForm <- addForm(surveySchema)
 optionalForm <- addForm(fmSchema)
 
@@ -205,7 +205,7 @@ roles |>
 
 ### List Role Grants
 
-A grant can be a
+A grant can be for a resource:
 
 -   database,
 
@@ -514,7 +514,7 @@ records_df
 
 ```{r}
  records_df |> 
-  filter(`Sector Name`=="Nutrition") |>
+  filter(`Sub-sector Name`=="Nutrition") |>
   arrange(`Organization Name`, `Admin 1 Name`, `Admin 2 Name`) |>
   slice_head(n=2) 
 ```
